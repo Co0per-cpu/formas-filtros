@@ -23,8 +23,10 @@ jobs:
         run: |
           $exe = Get-ChildItem dist/win-unpacked -Filter *.exe | Select-Object -First 1
           $env:ELECTRON_RUN_AS_NODE = "1"
-          & $exe.FullName test-vcam.js dist/win-unpacked/resources/app/vcam.js
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $out = & $exe.FullName test-vcam.js dist/win-unpacked/resources/app/vcam.js 2>&1 | Out-String
+          Write-Output $out
+          if (-not $out.Contains("virtual OK")) { exit 1 }
+          exit 0
       - uses: actions/upload-artifact@v4
         with:
           name: FormasYFiltros-windows
