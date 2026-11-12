@@ -15,7 +15,16 @@ jobs:
           node-version: 20
       - run: npm install
       - run: npm run prepare-web
+      - name: Probar la cámara virtual (Node)
+        run: node test-vcam.js
       - run: npm run dist
+      - name: Probar la cámara virtual dentro del programa empaquetado
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/win-unpacked -Filter *.exe | Select-Object -First 1
+          $env:ELECTRON_RUN_AS_NODE = "1"
+          & $exe.FullName test-vcam.js dist/win-unpacked/resources/app/vcam.js
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: FormasYFiltros-windows

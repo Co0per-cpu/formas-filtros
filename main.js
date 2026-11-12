@@ -1,5 +1,6 @@
 // Ventana de escritorio de Formas y Filtros (Electron).
-const { app, BrowserWindow, protocol, net, session } = require("electron");
+const { app, BrowserWindow, protocol, net, session, ipcMain } = require("electron");
+const vcam = require("./vcam");
 const path = require("path");
 const { pathToFileURL } = require("url");
 
@@ -24,8 +25,16 @@ app.whenReady().then(() => {
     width: 1280, height: 820, minWidth: 480, minHeight: 480,
     backgroundColor: "#0b0b10", autoHideMenuBar: true, title: "Formas y Filtros",
     icon: path.join(WEB, "icon-512.png"),
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, "preload.js") },
   });
   win.loadURL("app://formas/index.html");
 });
+
+ipcMain.handle("vcam:start", async (_e, w, h, fps) => {
+  try { return await vcam.start(w, h, fps); }
+  catch (err) { return { ok: false, error: "No se pudo iniciar la cámara virtual: " + err.message }; }
+});
+ipcMain.on("vcam:frame", (_e, data) => { try { vcam.write(data); } catch {} });
+ipcMain.handle("vcam:stop", () => { vcam.stop(); return true; });
+app.on("before-quit", () => vcam.stop());
 app.on("window-all-closed", () => app.quit());

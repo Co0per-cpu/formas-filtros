@@ -69,6 +69,14 @@
   <div class="row"><span class="lbl">Forma</span><div class="row" id="shapes"></div></div>
   <div class="row"><span class="lbl">Filtro</span><div class="row" id="filters"></div></div>
   <div class="row"><span class="lbl">Cámara</span>
+    <button id="bNextCam">Cambiar cámara</button>
+    <button id="bFlipV">Voltear</button>
+    <select id="qualSel" aria-label="Calidad de video">
+      <option value="0">Calidad 480p</option>
+      <option value="1" selected>Calidad 720p</option>
+      <option value="2">Calidad 1080p</option>
+      <option value="3">Calidad 4K</option>
+    </select>
     <button id="bTrack">Seguimiento</button>
     <select id="blurSel" aria-label="Desenfoque">
       <option value="0">Sin desenfoque</option>
@@ -81,6 +89,7 @@
   </div>
   <div class="row"><span class="lbl">Más</span>
     <select id="camSel" aria-label="Cámara"></select>
+    <button id="bVcam" hidden>Cámara virtual</button>
     <button id="bRemote">Cámara del celular</button>
     <button id="bMirror" class="on">Espejo</button>
     <button id="bSkel" class="on">Esqueleto</button>
@@ -116,7 +125,13 @@
 <div id="help" hidden>
   <div class="card" style="max-width:440px; text-align:left; align-items:stretch">
     <h2 style="text-align:center">Usarla en Discord</h2>
-    <p><b>Con la webcam del laptop</b></p>
+    <p><b>En la app de escritorio (lo más fácil)</b></p>
+    <ol>
+      <li>Instala OBS Studio una vez. No necesitas abrirlo.</li>
+      <li>Aquí pulsa “Cámara virtual” (fila “Más”).</li>
+      <li>En Discord: Ajustes → Voz y video → Cámara → “OBS Virtual Camera”.</li>
+    </ol>
+    <p><b>En la versión web, con OBS abierto</b></p>
     <ol>
       <li>Instala OBS Studio y agrega esta app como “Captura de ventana”.</li>
       <li>Pulsa “Modo limpio” aquí (o la tecla H) para ocultar los botones.</li>
@@ -140,6 +155,12 @@
     <div id="sStatus">Abriendo cámara…</div>
     <div class="row" style="justify-content:center">
       <button id="bFlip">Cambiar cámara</button>
+      <select id="sQual" aria-label="Calidad de video">
+        <option value="0">480p</option>
+        <option value="1" selected>720p</option>
+        <option value="2">1080p</option>
+        <option value="3">4K</option>
+      </select>
       <button id="bStop">Detener</button>
     </div>
   </div>
@@ -162,7 +183,13 @@ const MAXP = 40;
 const $ = id => document.getElementById(id);
 const video = $("cam"), out = $("out"), ctx = out.getContext("2d");
 const statusEl = $("status");
-const state = { shape:0, filter:0, mirror:true, skel:true, hands:[], raw:[], smooth:null,
+const QUAL = [
+  { w:854,  h:480,  br:2.5e6 },
+  { w:1280, h:720,  br:6e6 },
+  { w:1920, h:1080, br:10e6 },
+  { w:3840, h:2160, br:20e6 },
+];
+const state = { q:1, flip:false, devId:null, shape:0, filter:0, mirror:true, skel:true, hands:[], raw:[], smooth:null,
                 track:false, blur:0, blurAmt:0.6, zoom:1 };
 const view = { z:1, x:0.5, y:0.5 }, pan = { x:0.5, y:0.5 };
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -177,7 +204,7 @@ function updateView() {
 }
 function toScreen(x, y, W, H) {           // punto del video (0..1) -> píxel en pantalla
   const mx = (x - view.x) * view.z + 0.5, my = (y - view.y) * view.z + 0.5;
-  return [(state.mirror ? 1 - mx : mx) * W, my * H];
+  return [(state.mirror ? 1 - mx : mx) * W, (state.flip ? 1 - my : my) * H];
 }
 
 /* ---------- interfaz ---------- */
@@ -208,7 +235,7 @@ addEventListener("pointermove", e => {     // arrastrar mueve el encuadre cuando
   dragged = true; drag = { x:e.clientX, y:e.clientY };
   const h = 0.5 / view.z;
   pan.x = clamp(pan.x + (state.mirror ? 1 : -1) * dx / view.z, h, 1 - h);
-  pan.y = clamp(pan.y - dy / view.z, h, 1 - h);
+  pan.y = clamp(pan.y + (state.flip ? 1 : -1) * dy / view.z, h, 1 - h);
 });
 out.addEventListener("click", () => {
   if (dragged) { dragged = false; return; }
@@ -229,13 +256,13 @@ const VS = `attribute vec2 p; varying vec2 uv;
 void main(){ uv = vec2((p.x+1.0)*0.5, (1.0-p.y)*0.5); gl_Position = vec4(p,0.0,1.0); }`;
 const FS = `precision mediump float;
 varying vec2 uv;
-uniform sampler2D tex, msk; uniform vec2 res, cen; uniform float time, mirror, full, zoom, blurMode, blurAmt;
+uniform sampler2D tex, msk; uniform vec2 res, cen; uniform float time, mirror, flipY, full, zoom, blurMode, blurAmt;
 uniform int filt, n; uniform vec2 pts[${MAXP + 1}];
 vec3 hsv(float h, float s, float v){
   vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0/3.0, 1.0/3.0))*6.0 - 3.0) - 1.0, 0.0, 1.0);
   return v * mix(vec3(1.0), k, s);
 }
-vec2 V(vec2 u){ vec2 m = vec2(mix(u.x, 1.0-u.x, mirror), u.y); return clamp(cen + (m-0.5)/zoom, 0.0, 1.0); }
+vec2 V(vec2 u){ vec2 m = vec2(mix(u.x, 1.0-u.x, mirror), mix(u.y, 1.0-u.y, flipY)); return clamp(cen + (m-0.5)/zoom, 0.0, 1.0); }
 vec3 T(vec2 u){ return texture2D(tex, V(u)).rgb; }
 vec3 blurT(vec2 u){
   vec3 s = vec3(0.0); float r = blurAmt*0.035; vec2 asp = vec2(res.y/res.x, 1.0);
@@ -318,7 +345,7 @@ gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
 const loc = gl.getAttribLocation(prog, "p");
 gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-const U = {}; ["res","time","mirror","full","filt","n","pts","tex","msk","zoom","cen","blurMode","blurAmt"].forEach(k => U[k] = gl.getUniformLocation(prog, k));
+const U = {}; ["res","time","mirror","flipY","full","filt","n","pts","tex","msk","zoom","cen","blurMode","blurAmt"].forEach(k => U[k] = gl.getUniformLocation(prog, k));
 const texParams = () => [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
  [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]
   .forEach(([k, v]) => gl.texParameteri(gl.TEXTURE_2D, k, v));
@@ -412,7 +439,7 @@ function frame(now) {
   const filt = state.filter === 0 ? 1 + Math.floor(t / 1.4) % NF : state.filter;
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
   gl.uniform2f(U.res, W, H); gl.uniform1f(U.time, t);
-  gl.uniform1f(U.mirror, state.mirror ? 1 : 0); gl.uniform1f(U.full, state.shape === 4 ? 1 : 0);
+  gl.uniform1f(U.mirror, state.mirror ? 1 : 0); gl.uniform1f(U.flipY, state.flip ? 1 : 0); gl.uniform1f(U.full, state.shape === 4 ? 1 : 0);
   gl.uniform1f(U.zoom, view.z); gl.uniform2f(U.cen, view.x, view.y);
   gl.uniform1f(U.blurMode, state.blur === 3 || segm ? state.blur : 0); gl.uniform1f(U.blurAmt, state.blurAmt);
   gl.uniform1i(U.filt, filt); gl.uniform1i(U.n, n); gl.uniform2fv(U.pts, ptsBuf);
@@ -434,6 +461,7 @@ function frame(now) {
       for (const p of h) { ctx.beginPath(); ctx.arc(p[0], p[1], 3 * k, 0, 6.3); ctx.fill(); }
     }
   }
+  pushVcam(now);
 }
 
 /* ---------- cámara ---------- */
@@ -441,14 +469,90 @@ let stream = null;
 async function openCam(deviceId) {
   stream?.getTracks().forEach(t => t.stop());
   const v = deviceId ? { deviceId:{ exact:deviceId } } : { facingMode:"user" };
-  stream = await navigator.mediaDevices.getUserMedia({ video:{ ...v, width:{ ideal:1280 }, height:{ ideal:720 } }, audio:false });
+  const Q = QUAL[state.q];
+  stream = await navigator.mediaDevices.getUserMedia({ audio:false,
+    video:{ ...v, width:{ ideal:Q.w }, height:{ ideal:Q.h }, frameRate:{ ideal:30 } } });
   video.srcObject = stream; await video.play();
   const cur = stream.getVideoTracks()[0].getSettings().deviceId;
+  state.devId = cur;
   const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
   const sel = $("camSel"); sel.innerHTML = "";
   cams.forEach((d, i) => sel.add(new Option(d.label || "Cámara " + (i + 1), d.deviceId, false, d.deviceId === cur)));
 }
 $("camSel").onchange = e => openCam(e.target.value).catch(showErr);
+$("bNextCam").onclick = () => {
+  const o = [...$("camSel").options];
+  if (o.length < 2) { statusEl.textContent = "Solo hay una cámara conectada."; return; }
+  const i = o.findIndex(x => x.value === state.devId);
+  const next = o[(i + 1) % o.length];
+  openCam(next.value).then(() => { statusEl.textContent = "Cámara: " + next.text; }).catch(showErr);
+};
+$("bFlipV").onclick = () => {
+  state.flip = !state.flip; state.smooth = null;
+  $("bFlipV").classList.toggle("on", state.flip);
+};
+$("qualSel").onchange = async e => {
+  state.q = +e.target.value;
+  if (!stream) { statusEl.textContent = "La calidad de la cámara del celular se elige en el celular."; return; }
+  try {
+    await openCam(state.devId);
+    await new Promise(r => setTimeout(r, 300));
+    const Q = QUAL[state.q], got = video.videoHeight;
+    statusEl.textContent = `Calidad: ${video.videoWidth}×${got}` + (got && got < Q.h ? " (el máximo de tu cámara)" : "");
+  } catch (err) { showErr(err); }
+};
+
+/* ---------- cámara virtual (solo app de escritorio) ---------- */
+const VC = window.vcam;
+let vcOn = false, vcBusy = false, vcStarting = false, vcW = 0, vcH = 0, vcLast = 0, vcWorker = null;
+if (VC) $("bVcam").hidden = false;
+const NV12 = `let oc, octx;
+onmessage = ({ data:{ bmp, w, h } }) => {
+  if (!oc || oc.width !== w || oc.height !== h) { oc = new OffscreenCanvas(w, h); octx = oc.getContext("2d", { willReadFrequently:true }); }
+  octx.drawImage(bmp, 0, 0, w, h); bmp.close();
+  const px = octx.getImageData(0, 0, w, h).data, n = w * h, out = new Uint8Array(n * 3 / 2);
+  for (let i = 0, j = 0; i < n; i++, j += 4) out[i] = ((66 * px[j] + 129 * px[j + 1] + 25 * px[j + 2] + 128) >> 8) + 16;
+  let o = n;
+  for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
+    const j = (y * w + x) * 4, r = px[j], g = px[j + 1], b = px[j + 2];
+    out[o++] = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
+    out[o++] = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
+  }
+  postMessage(out, [out.buffer]);
+};`;
+function vcStop(msg) {
+  vcOn = false; vcW = vcH = 0; $("bVcam").classList.remove("on"); VC?.stop();
+  if (msg) statusEl.textContent = msg;
+}
+$("bVcam").onclick = () => {
+  if (vcOn) return vcStop("Cámara virtual detenida.");
+  if (!vcWorker) {
+    vcWorker = new Worker(URL.createObjectURL(new Blob([NV12], { type:"text/javascript" })));
+    vcWorker.onmessage = e => { if (vcOn) VC.frame(e.data); vcBusy = false; };
+    vcWorker.onerror = () => { vcBusy = false; vcStop("La cámara virtual tuvo un error y se detuvo."); };
+  }
+  vcOn = true; $("bVcam").classList.add("on");
+  statusEl.textContent = "Cámara virtual encendida · en Discord elige “OBS Virtual Camera”";
+};
+function pushVcam(now) {
+  if (!vcOn || vcBusy || vcStarting || now - vcLast < 32) return;
+  const W = out.width, H = out.height;
+  if (!W || !H) return;
+  const h = Math.min(H, QUAL[state.q].h, 1080) & ~1, w = Math.round(h * W / H) & ~1;
+  if (w !== vcW || h !== vcH) {           // tamaño nuevo: reinicia la cámara virtual
+    vcStarting = true;
+    VC.start(w, h, 30).then(r => {
+      vcStarting = false;
+      if (!vcOn) return;
+      if (!r?.ok) return vcStop(r?.error || "No se pudo iniciar la cámara virtual.");
+      vcW = w; vcH = h;
+      if (r.warn) statusEl.textContent = r.warn;
+    });
+    return;
+  }
+  vcLast = now; vcBusy = true;
+  createImageBitmap(out).then(bmp => vcWorker.postMessage({ bmp, w, h }, [bmp])).catch(() => { vcBusy = false; });
+}
 
 const FACE_MODEL = DESK ? local("models/blaze_face_short_range.tflite") : GM + "face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
 const SEG_MODEL  = DESK ? local("models/selfie_segmenter.tflite") : GM + "image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
@@ -564,11 +668,11 @@ $("bHelp").onclick = () => { $("help").hidden = false; };
 $("bHelpClose").onclick = () => { $("help").hidden = true; };
 
 // --- lado celular: envía el video ---
-let sPeer = null, sCall = null, sStream = null, sFacing = "environment", wake = null;
+let sPeer = null, sCall = null, sStream = null, sFacing = "environment", sQ = 1, wake = null;
 const sSay = t => { $("sStatus").textContent = t; };
 async function senderCam() {
   const s = await navigator.mediaDevices.getUserMedia({ audio:false,
-    video:{ facingMode:sFacing, width:{ ideal:1280 }, height:{ ideal:720 }, frameRate:{ ideal:30 } } });
+    video:{ facingMode:sFacing, width:{ ideal:QUAL[sQ].w }, height:{ ideal:QUAL[sQ].h }, frameRate:{ ideal:30 } } });
   const sender = sCall?.peerConnection?.getSenders().find(x => x.track?.kind === "video");
   if (sender) await sender.replaceTrack(s.getVideoTracks()[0]);
   sStream?.getTracks().forEach(t => t.stop());
@@ -604,6 +708,7 @@ function stopSender() {
 }
 $("bSend").onclick = startSender;
 $("bStop").onclick = stopSender;
+$("sQual").onchange = e => { sQ = +e.target.value; senderCam().catch(err => sSay(peerMsg(err))); };
 $("bFlip").onclick = () => { sFacing = sFacing === "user" ? "environment" : "user"; senderCam().catch(e => sSay(peerMsg(e))); };
 const fromLink = /^#cam=([A-Za-z0-9]{6})$/.exec(location.hash);
 if (fromLink) { $("code").value = fromLink[1].toUpperCase(); $("bSend").classList.remove("alt"); }
@@ -620,7 +725,7 @@ $("bRec").onclick = () => {
   if (rec) { rec.stop(); return; }
   const type = ["video/mp4", "video/webm;codecs=vp9", "video/webm"].find(t => window.MediaRecorder?.isTypeSupported(t));
   if (!type) { statusEl.textContent = "Este navegador no permite grabar."; return; }
-  chunks = []; rec = new MediaRecorder(out.captureStream(30), { mimeType:type, videoBitsPerSecond:6e6 });
+  chunks = []; rec = new MediaRecorder(out.captureStream(30), { mimeType:type, videoBitsPerSecond:QUAL[state.q].br });
   rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   rec.onstop = () => { save(new Blob(chunks, { type }), `formas-${stamp()}.${type.includes("mp4") ? "mp4" : "webm"}`);
     rec = null; $("bRec").classList.remove("on"); $("bRec").textContent = "Grabar"; };

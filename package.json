@@ -1,6 +1,6 @@
 {
   "name": "formas-filtros",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Formas y Filtros: efectos de cámara con seguimiento de manos",
   "author": "Co0per-cpu",
   "private": true,
@@ -21,8 +21,22 @@
     "appId": "io.github.co0per-cpu.formasfiltros",
     "productName": "Formas y Filtros",
     "asar": false,
-    "files": ["main.js", "web/**"],
-    "win": { "target": "portable", "icon": "icon-512.png" },
-    "portable": { "artifactName": "FormasYFiltros.exe" }
+    "files": [
+      "main.js",
+      "preload.js",
+      "vcam.js",
+      "web/**"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "icon-512.png"
+    },
+    "portable": {
+      "artifactName": "FormasYFiltros.exe"
+    },
+    "npmRebuild": false
+  },
+  "dependencies": {
+    "koffi": "^2.9.0"
   }
 }
