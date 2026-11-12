@@ -13,15 +13,20 @@
   html,body { margin:0; height:100%; background:var(--bg); color:var(--txt);
     font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
   #stage { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
-  #out { max-width:100%; max-height:100%; display:block; touch-action:manipulation; }
+  #out { max-width:100%; max-height:100%; display:block; touch-action:none; }
   #cam { display:none; }
+  .sl { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--dim); flex:none; }
+  .sl input { width:110px; accent-color:var(--acc); }
   [hidden] { display:none !important; }
   #start button.alt { background:#1c1c28; border-color:var(--line); font-weight:500; font-size:15px; padding:12px 22px; }
   .send { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:center; }
-  input { font:inherit; font-size:16px; color:var(--txt); background:#1c1c28; border:1px solid var(--line);
+  #code { font:inherit; font-size:16px; color:var(--txt); background:#1c1c28; border:1px solid var(--line);
     border-radius:999px; padding:11px 16px; width:150px; text-align:center; letter-spacing:.15em; text-transform:uppercase; }
-  input::placeholder { letter-spacing:0; text-transform:none; color:var(--dim); }
-  #link { position:fixed; inset:0; z-index:6; background:rgba(5,5,10,.8); display:flex; align-items:center; justify-content:center; padding:20px; }
+  #code::placeholder { letter-spacing:0; text-transform:none; color:var(--dim); }
+  .card ol { margin:0; padding-left:20px; color:var(--dim); font-size:14px; line-height:1.55; }
+  .card b { color:var(--txt); }
+  #help { overflow:auto; }
+  #link, #help { position:fixed; inset:0; z-index:6; background:rgba(5,5,10,.8); display:flex; align-items:center; justify-content:center; padding:20px; }
   .card { background:#14141d; border:1px solid var(--line); border-radius:20px; padding:24px; max-width:360px; width:100%;
     display:flex; flex-direction:column; align-items:center; gap:14px; text-align:center; }
   .card h2 { margin:0; font-size:20px; }
@@ -63,6 +68,17 @@
 <div id="ui">
   <div class="row"><span class="lbl">Forma</span><div class="row" id="shapes"></div></div>
   <div class="row"><span class="lbl">Filtro</span><div class="row" id="filters"></div></div>
+  <div class="row"><span class="lbl">Cámara</span>
+    <button id="bTrack">Seguimiento</button>
+    <select id="blurSel" aria-label="Desenfoque">
+      <option value="0">Sin desenfoque</option>
+      <option value="1">Desenfocar fondo</option>
+      <option value="2">Desenfocar persona</option>
+      <option value="3">Desenfocar todo</option>
+    </select>
+    <label class="sl">Zoom <input id="zoom" type="range" min="1" max="4" step="0.05" value="1"></label>
+    <label class="sl">Desenfoque <input id="blurAmt" type="range" min="0.1" max="1" step="0.05" value="0.6"></label>
+  </div>
   <div class="row"><span class="lbl">Más</span>
     <select id="camSel" aria-label="Cámara"></select>
     <button id="bRemote">Cámara del celular</button>
@@ -71,6 +87,7 @@
     <button id="bPhoto">Foto</button>
     <button id="bRec" class="rec">Grabar</button>
     <button id="bClean">Modo limpio</button>
+    <button id="bHelp">Guía Discord</button>
   </div>
 </div>
 
@@ -93,6 +110,27 @@
     <div id="bigcode">······</div>
     <p id="linkMsg">Preparando conexión…</p>
     <button id="bLinkClose">Cerrar</button>
+  </div>
+</div>
+
+<div id="help" hidden>
+  <div class="card" style="max-width:440px; text-align:left; align-items:stretch">
+    <h2 style="text-align:center">Usarla en Discord</h2>
+    <p><b>Con la webcam del laptop</b></p>
+    <ol>
+      <li>Instala OBS Studio y agrega esta app como “Captura de ventana”.</li>
+      <li>Pulsa “Modo limpio” aquí (o la tecla H) para ocultar los botones.</li>
+      <li>En OBS pulsa “Iniciar cámara virtual”.</li>
+      <li>En Discord: Ajustes → Voz y video → Cámara → “OBS Virtual Camera”.</li>
+    </ol>
+    <p><b>Con la cámara del celular por WiFi o USB</b></p>
+    <ol>
+      <li>Instala DroidCam en el laptop y en el celular, y conéctalos por WiFi o USB.</li>
+      <li>En esta app, en el selector de cámara de la fila “Más”, elige “DroidCam”.</li>
+      <li>Sigue los pasos de OBS de arriba para llevar el resultado a Discord.</li>
+    </ol>
+    <p>Sin DroidCam también puedes usar “Cámara del celular”, que conecta por código con ambos equipos en línea.</p>
+    <button id="bHelpClose" style="align-self:center">Cerrar</button>
   </div>
 </div>
 
@@ -119,7 +157,23 @@ const MAXP = 40;
 const $ = id => document.getElementById(id);
 const video = $("cam"), out = $("out"), ctx = out.getContext("2d");
 const statusEl = $("status");
-const state = { shape:0, filter:0, mirror:true, skel:true, hands:[], smooth:null };
+const state = { shape:0, filter:0, mirror:true, skel:true, hands:[], raw:[], smooth:null,
+                track:false, blur:0, blurAmt:0.6, zoom:1 };
+const view = { z:1, x:0.5, y:0.5 }, pan = { x:0.5, y:0.5 };
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+let face = null;
+function updateView() {
+  let tz = state.zoom, tx = pan.x, ty = pan.y;
+  if (state.track && face) { tz = face.z; tx = face.x; ty = face.y; }
+  view.z += (tz - view.z) * 0.08;
+  const h = 0.5 / view.z;
+  view.x = clamp(view.x + (clamp(tx, h, 1 - h) - view.x) * 0.1, h, 1 - h);
+  view.y = clamp(view.y + (clamp(ty, h, 1 - h) - view.y) * 0.1, h, 1 - h);
+}
+function toScreen(x, y, W, H) {           // punto del video (0..1) -> píxel en pantalla
+  const mx = (x - view.x) * view.z + 0.5, my = (y - view.y) * view.z + 0.5;
+  return [(state.mirror ? 1 - mx : mx) * W, my * H];
+}
 
 /* ---------- interfaz ---------- */
 function chips(box, names, key) {
@@ -138,7 +192,21 @@ const paintFilters = chips($("filters"), FILTERS, "filter");
 function toggle(btn, key) { btn.onclick = () => { state[key] = !state[key]; btn.classList.toggle("on", state[key]); }; }
 toggle($("bMirror"), "mirror"); toggle($("bSkel"), "skel");
 $("bClean").onclick = () => document.body.classList.add("clean");
+let drag = null, dragged = false;
+out.addEventListener("pointerdown", e => { drag = { x:e.clientX, y:e.clientY }; dragged = false; });
+addEventListener("pointerup", () => { drag = null; });
+addEventListener("pointermove", e => {     // arrastrar mueve el encuadre cuando hay zoom
+  if (!drag || state.track || view.z <= 1.01) return;
+  const r = out.getBoundingClientRect();
+  const dx = (e.clientX - drag.x) / r.width, dy = (e.clientY - drag.y) / r.height;
+  if (!dragged && Math.abs(dx) + Math.abs(dy) < 0.012) return;
+  dragged = true; drag = { x:e.clientX, y:e.clientY };
+  const h = 0.5 / view.z;
+  pan.x = clamp(pan.x + (state.mirror ? 1 : -1) * dx / view.z, h, 1 - h);
+  pan.y = clamp(pan.y - dy / view.z, h, 1 - h);
+});
 out.addEventListener("click", () => {
+  if (dragged) { dragged = false; return; }
   if (document.body.classList.contains("clean")) document.body.classList.remove("clean");
   else { state.filter = state.filter % NF + 1; paintFilters(); }
 });
@@ -156,14 +224,22 @@ const VS = `attribute vec2 p; varying vec2 uv;
 void main(){ uv = vec2((p.x+1.0)*0.5, (1.0-p.y)*0.5); gl_Position = vec4(p,0.0,1.0); }`;
 const FS = `precision mediump float;
 varying vec2 uv;
-uniform sampler2D tex; uniform vec2 res; uniform float time, mirror, full;
+uniform sampler2D tex, msk; uniform vec2 res, cen; uniform float time, mirror, full, zoom, blurMode, blurAmt;
 uniform int filt, n; uniform vec2 pts[${MAXP + 1}];
 vec3 hsv(float h, float s, float v){
   vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0/3.0, 1.0/3.0))*6.0 - 3.0) - 1.0, 0.0, 1.0);
   return v * mix(vec3(1.0), k, s);
 }
-vec2 M(vec2 u){ return vec2(mix(u.x, 1.0-u.x, mirror), u.y); }
-vec3 T(vec2 u){ return texture2D(tex, M(clamp(u, 0.0, 1.0))).rgb; }
+vec2 V(vec2 u){ vec2 m = vec2(mix(u.x, 1.0-u.x, mirror), u.y); return clamp(cen + (m-0.5)/zoom, 0.0, 1.0); }
+vec3 T(vec2 u){ return texture2D(tex, V(u)).rgb; }
+vec3 blurT(vec2 u){
+  vec3 s = vec3(0.0); float r = blurAmt*0.035; vec2 asp = vec2(res.y/res.x, 1.0);
+  for (int i = 0; i < 32; i++) {
+    float f = float(i), a = f*2.39996;
+    s += T(u + vec2(cos(a), sin(a))*asp*sqrt((f+0.5)/32.0)*r);
+  }
+  return s/32.0;
+}
 float L(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 float rnd(float x){ return fract(sin(x*91.345)*47453.5453); }
 bool inside(vec2 q){
@@ -213,6 +289,14 @@ vec3 fx(vec2 u){
 }
 void main(){
   vec3 c = T(uv);
+  if (blurMode > 0.5) {
+    float w = 1.0;
+    if (blurMode < 2.5) {
+      float person = smoothstep(0.35, 0.65, texture2D(msk, V(uv)).r);
+      w = blurMode < 1.5 ? 1.0 - person : person;
+    }
+    if (w > 0.01) c = mix(c, blurT(uv), w);
+  }
   if (full > 0.5 || inside(uv)) c = fx(uv);
   gl_FragColor = vec4(c, 1.0);
 }`;
@@ -229,11 +313,25 @@ gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
 const loc = gl.getAttribLocation(prog, "p");
 gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-const U = {}; ["res","time","mirror","full","filt","n","pts"].forEach(k => U[k] = gl.getUniformLocation(prog, k));
-gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
-[[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+const U = {}; ["res","time","mirror","full","filt","n","pts","tex","msk","zoom","cen","blurMode","blurAmt"].forEach(k => U[k] = gl.getUniformLocation(prog, k));
+const texParams = () => [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
  [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]
   .forEach(([k, v]) => gl.texParameteri(gl.TEXTURE_2D, k, v));
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, gl.createTexture()); texParams();   // máscara de persona
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 1, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, new Uint8Array([255]));
+gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, gl.createTexture()); texParams();   // video
+gl.uniform1i(U.tex, 0); gl.uniform1i(U.msk, 1);
+let maskBuf = null;
+function onMask(res) {
+  const ms = res.confidenceMasks; if (!ms?.length) return;
+  const m = ms[ms.length - 1], f = m.getAsFloat32Array();
+  if (!maskBuf || maskBuf.length !== f.length) maskBuf = new Uint8Array(f.length);
+  for (let i = 0; i < f.length; i++) maskBuf[i] = f[i] * 255;
+  gl.activeTexture(gl.TEXTURE1);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, m.width, m.height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, maskBuf);
+  gl.activeTexture(gl.TEXTURE0);
+}
 const ptsBuf = new Float32Array((MAXP + 1) * 2);
 
 /* ---------- geometría de la forma (en píxeles de pantalla) ---------- */
@@ -277,20 +375,27 @@ function smoothed(p) {
 /* ---------- bucle principal ---------- */
 const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
                [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
-let landmarker = null, lastT = -1;
+let landmarker = null, faceDet = null, segm = null, lastT = -1, tick = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const W = video.videoWidth, H = video.videoHeight;
   if (video.readyState < 2 || !W) return;
   if (out.width !== W || out.height !== H) { out.width = glc.width = W; out.height = glc.height = H; gl.viewport(0, 0, W, H); }
 
-  if (landmarker && video.currentTime !== lastT) {
-    lastT = video.currentTime;
-    try {
-      const r = landmarker.detectForVideo(video, now);
-      state.hands = (r.landmarks || []).map(l => l.map(p => [(state.mirror ? 1 - p.x : p.x) * W, p.y * H]));
-    } catch (e) { /* un cuadro fallido no detiene el bucle */ }
+  if (video.currentTime !== lastT) {       // un cuadro fallido de detección no detiene el bucle
+    lastT = video.currentTime; tick++;
+    if (landmarker) try { state.raw = landmarker.detectForVideo(video, now).landmarks || []; } catch {}
+    if (state.track && faceDet && tick % 2 === 0) try {
+      let b = null;
+      for (const d of faceDet.detectForVideo(video, now).detections || []) {
+        const q = d.boundingBox; if (q && (!b || q.width * q.height > b.width * b.height)) b = q;
+      }
+      if (b) face = { x:(b.originX + b.width / 2) / W, y:(b.originY + b.height / 2) / H, z:clamp(0.35 * H / b.height, 1, 4) };
+    } catch {}
+    if ((state.blur === 1 || state.blur === 2) && segm) try { segm.segmentForVideo(video, now, onMask); } catch {}
   }
+  updateView();
+  state.hands = state.raw.map(l => l.map(p => toScreen(p.x, p.y, W, H)));
   const pts = smoothed(shapePoints(state.hands));
   let n = 0;
   if (pts) {
@@ -303,6 +408,8 @@ function frame(now) {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
   gl.uniform2f(U.res, W, H); gl.uniform1f(U.time, t);
   gl.uniform1f(U.mirror, state.mirror ? 1 : 0); gl.uniform1f(U.full, state.shape === 4 ? 1 : 0);
+  gl.uniform1f(U.zoom, view.z); gl.uniform2f(U.cen, view.x, view.y);
+  gl.uniform1f(U.blurMode, state.blur === 3 || segm ? state.blur : 0); gl.uniform1f(U.blurAmt, state.blurAmt);
   gl.uniform1i(U.filt, filt); gl.uniform1i(U.n, n); gl.uniform2fv(U.pts, ptsBuf);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
@@ -338,15 +445,43 @@ async function openCam(deviceId) {
 }
 $("camSel").onchange = e => openCam(e.target.value).catch(showErr);
 
+const FACE_MODEL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
+const SEG_MODEL  = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
+let mpP = null;
+const mp = () => mpP ??= (async () => {
+  const m = await import(MP + "/vision_bundle.mjs");
+  return { m, files: await m.FilesetResolver.forVisionTasks(MP + "/wasm") };
+})().catch(e => { mpP = null; throw e; });
+async function make(cls, model, extra) {
+  const { m, files } = await mp();
+  const mk = delegate => m[cls].createFromOptions(files, { baseOptions:{ modelAssetPath:model, delegate }, runningMode:"VIDEO", ...extra });
+  try { return await mk("GPU"); } catch { return await mk("CPU"); }
+}
 async function loadHands() {
   statusEl.textContent = "Cargando detector de manos…";
-  const { HandLandmarker, FilesetResolver } = await import(MP + "/vision_bundle.mjs");
-  const files = await FilesetResolver.forVisionTasks(MP + "/wasm");
-  const make = delegate => HandLandmarker.createFromOptions(files, {
-    baseOptions:{ modelAssetPath:MODEL, delegate }, runningMode:"VIDEO", numHands:2 });
-  try { landmarker = await make("GPU"); } catch { landmarker = await make("CPU"); }
+  landmarker = await make("HandLandmarker", MODEL, { numHands:2 });
   statusEl.textContent = "Muestra tus manos · toca la imagen para cambiar de filtro";
 }
+let faceAsked = false, segAsked = false;
+$("bTrack").onclick = async () => {
+  state.track = !state.track; $("bTrack").classList.toggle("on", state.track); face = null;
+  if (!state.track || faceDet || faceAsked) return;
+  faceAsked = true; statusEl.textContent = "Cargando seguimiento de rostro…";
+  try { faceDet = await make("FaceDetector", FACE_MODEL, {}); statusEl.textContent = "Seguimiento de rostro activo"; }
+  catch { faceAsked = false; state.track = false; $("bTrack").classList.remove("on");
+    statusEl.textContent = "No se pudo cargar el seguimiento (revisa tu internet)."; }
+};
+$("blurSel").onchange = async e => {
+  state.blur = +e.target.value;
+  if (state.blur === 0 || state.blur === 3 || segm || segAsked) return;
+  segAsked = true; statusEl.textContent = "Cargando detector de persona…";
+  try { segm = await make("ImageSegmenter", SEG_MODEL, { outputConfidenceMasks:true, outputCategoryMask:false });
+    statusEl.textContent = "Desenfoque activo"; }
+  catch { segAsked = false; state.blur = 0; e.target.value = "0";
+    statusEl.textContent = "No se pudo cargar el desenfoque de fondo (revisa tu internet)."; }
+};
+$("zoom").oninput = e => { state.zoom = +e.target.value; };
+$("blurAmt").oninput = e => { state.blurAmt = +e.target.value; };
 function showErr(e) {
   const m = e?.name === "NotAllowedError" ? "No hay permiso para usar la cámara. Actívalo en el navegador y recarga."
     : e?.name === "NotFoundError" ? "No se encontró ninguna cámara."
@@ -423,6 +558,8 @@ function useRemote(remote) {
 }
 $("bRecv").onclick = $("bRemote").onclick = startReceiver;
 $("bLinkClose").onclick = () => { $("link").hidden = true; };
+$("bHelp").onclick = () => { $("help").hidden = false; };
+$("bHelpClose").onclick = () => { $("help").hidden = true; };
 
 // --- lado celular: envía el video ---
 let sPeer = null, sCall = null, sStream = null, sFacing = "environment", wake = null;
