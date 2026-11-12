@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Formas y Filtros</title>
+<style>
+  :root { --bg:#0b0b10; --panel:rgba(18,18,26,.82); --line:#2c2c3a; --txt:#f2f2f7; --dim:#9a9ab0; --acc:#ff3d7f; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--txt);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
+  #stage { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  #out { max-width:100%; max-height:100%; display:block; touch-action:manipulation; }
+  #cam { display:none; }
+  [hidden] { display:none !important; }
+  #start button.alt { background:#1c1c28; border-color:var(--line); font-weight:500; font-size:15px; padding:12px 22px; }
+  .send { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:center; }
+  input { font:inherit; font-size:16px; color:var(--txt); background:#1c1c28; border:1px solid var(--line);
+    border-radius:999px; padding:11px 16px; width:150px; text-align:center; letter-spacing:.15em; text-transform:uppercase; }
+  input::placeholder { letter-spacing:0; text-transform:none; color:var(--dim); }
+  #link { position:fixed; inset:0; z-index:6; background:rgba(5,5,10,.8); display:flex; align-items:center; justify-content:center; padding:20px; }
+  .card { background:#14141d; border:1px solid var(--line); border-radius:20px; padding:24px; max-width:360px; width:100%;
+    display:flex; flex-direction:column; align-items:center; gap:14px; text-align:center; }
+  .card h2 { margin:0; font-size:20px; }
+  .card p { margin:0; color:var(--dim); font-size:14px; line-height:1.5; word-break:break-word; }
+  #qr img { border-radius:10px; display:block; }
+  #bigcode { font-size:38px; font-weight:700; letter-spacing:.2em; font-variant-numeric:tabular-nums; }
+  #sender { position:fixed; inset:0; z-index:7; background:#000; display:flex; flex-direction:column; }
+  #pv { flex:1; min-height:0; width:100%; object-fit:contain; background:#000; }
+  #sbar { padding:12px 12px calc(12px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:10px;
+    background:var(--panel); border-top:1px solid var(--line); }
+  #sStatus { font-size:14px; color:var(--txt); text-align:center; }
+  #ui { position:fixed; left:0; right:0; bottom:0; padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    background:var(--panel); backdrop-filter:blur(10px); border-top:1px solid var(--line);
+    display:flex; flex-direction:column; gap:8px; }
+  .row { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; align-items:center; }
+  .row::-webkit-scrollbar { display:none; }
+  .lbl { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); flex:none; width:52px; }
+  button, select { font:inherit; font-size:14px; color:var(--txt); background:#1c1c28; border:1px solid var(--line);
+    border-radius:999px; padding:8px 14px; flex:none; cursor:pointer; white-space:nowrap; }
+  select { max-width:190px; }
+  button.on { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
+  button.rec.on { background:#e02020; border-color:#e02020; }
+  #status { position:fixed; top:calc(10px + env(safe-area-inset-top)); left:12px; font-size:12px; color:var(--dim);
+    background:var(--panel); padding:6px 10px; border-radius:999px; border:1px solid var(--line); }
+  #start { position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:18px; padding:28px; text-align:center; z-index:5; }
+  #start h1 { margin:0; font-size:30px; letter-spacing:-.02em; }
+  #start p { margin:0; max-width:420px; color:var(--dim); line-height:1.5; font-size:15px; }
+  #start button { font-size:17px; padding:14px 30px; background:var(--acc); border-color:var(--acc); font-weight:600; }
+  #err { color:#ff8a8a; font-size:14px; max-width:420px; }
+  body.clean #ui, body.clean #status { display:none; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="out"></canvas></div>
+<video id="cam" playsinline muted></video>
+<div id="status">Listo</div>
+
+<div id="ui">
+  <div class="row"><span class="lbl">Forma</span><div class="row" id="shapes"></div></div>
+  <div class="row"><span class="lbl">Filtro</span><div class="row" id="filters"></div></div>
+  <div class="row"><span class="lbl">Más</span>
+    <select id="camSel" aria-label="Cámara"></select>
+    <button id="bRemote">Cámara del celular</button>
+    <button id="bMirror" class="on">Espejo</button>
+    <button id="bSkel" class="on">Esqueleto</button>
+    <button id="bPhoto">Foto</button>
+    <button id="bRec" class="rec">Grabar</button>
+    <button id="bClean">Modo limpio</button>
+  </div>
+</div>
+
+<div id="start">
+  <h1>Formas y Filtros</h1>
+  <p>Arma una forma en el aire con el pulgar y el índice de ambas manos. Dentro de la forma, tu cámara se ve con el filtro elegido.</p>
+  <button id="bStart">Usar la cámara de este equipo</button>
+  <button id="bRecv" class="alt">Recibir la cámara de mi celular</button>
+  <div class="send">
+    <input id="code" placeholder="Código del PC" maxlength="6" autocomplete="off" autocapitalize="characters" aria-label="Código del PC">
+    <button id="bSend" class="alt">Enviar esta cámara al PC</button>
+  </div>
+  <div id="err"></div>
+</div>
+
+<div id="link" hidden>
+  <div class="card">
+    <h2>Conecta tu celular</h2>
+    <div id="qr"></div>
+    <div id="bigcode">······</div>
+    <p id="linkMsg">Preparando conexión…</p>
+    <button id="bLinkClose">Cerrar</button>
+  </div>
+</div>
+
+<div id="sender" hidden>
+  <video id="pv" playsinline muted autoplay></video>
+  <div id="sbar">
+    <div id="sStatus">Abriendo cámara…</div>
+    <div class="row" style="justify-content:center">
+      <button id="bFlip">Cambiar cámara</button>
+      <button id="bStop">Detener</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+
+const SHAPES  = ["Cuadro", "Triángulo", "Círculo", "Estrella", "Pantalla completa"];
+const FILTERS = ["Auto", "Psicodélico", "Térmico", "Neón", "Pop", "Negativo", "Glitch", "Píxel"];
+const NF = FILTERS.length - 1;          // filtros reales (sin "Auto")
+const MAXP = 40;
+
+const $ = id => document.getElementById(id);
+const video = $("cam"), out = $("out"), ctx = out.getContext("2d");
+const statusEl = $("status");
+const state = { shape:0, filter:0, mirror:true, skel:true, hands:[], smooth:null };
+
+/* ---------- interfaz ---------- */
+function chips(box, names, key) {
+  names.forEach((n, i) => {
+    const b = document.createElement("button");
+    b.textContent = n;
+    b.onclick = () => { state[key] = i; state.smooth = null; paint(); };
+    box.appendChild(b);
+  });
+  function paint() { [...box.children].forEach((b, i) => b.classList.toggle("on", i === state[key])); }
+  paint();
+  return paint;
+}
+const paintShapes  = chips($("shapes"), SHAPES, "shape");
+const paintFilters = chips($("filters"), FILTERS, "filter");
+function toggle(btn, key) { btn.onclick = () => { state[key] = !state[key]; btn.classList.toggle("on", state[key]); }; }
+toggle($("bMirror"), "mirror"); toggle($("bSkel"), "skel");
+$("bClean").onclick = () => document.body.classList.add("clean");
+out.addEventListener("click", () => {
+  if (document.body.classList.contains("clean")) document.body.classList.remove("clean");
+  else { state.filter = state.filter % NF + 1; paintFilters(); }
+});
+addEventListener("keydown", e => {
+  if (e.key === "h" || e.key === "H") document.body.classList.toggle("clean");
+  if (e.key === "f" || e.key === "F") document.documentElement.requestFullscreen?.().catch(() => {});
+  const n = parseInt(e.key, 10);
+  if (n >= 0 && n <= NF) { state.filter = n; paintFilters(); }
+});
+
+/* ---------- WebGL: filtro dentro de la forma ---------- */
+const glc = document.createElement("canvas");
+const gl = glc.getContext("webgl", { premultipliedAlpha:false });
+const VS = `attribute vec2 p; varying vec2 uv;
+void main(){ uv = vec2((p.x+1.0)*0.5, (1.0-p.y)*0.5); gl_Position = vec4(p,0.0,1.0); }`;
+const FS = `precision mediump float;
+varying vec2 uv;
+uniform sampler2D tex; uniform vec2 res; uniform float time, mirror, full;
+uniform int filt, n; uniform vec2 pts[${MAXP + 1}];
+vec3 hsv(float h, float s, float v){
+  vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0/3.0, 1.0/3.0))*6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return v * mix(vec3(1.0), k, s);
+}
+vec2 M(vec2 u){ return vec2(mix(u.x, 1.0-u.x, mirror), u.y); }
+vec3 T(vec2 u){ return texture2D(tex, M(clamp(u, 0.0, 1.0))).rgb; }
+float L(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
+float rnd(float x){ return fract(sin(x*91.345)*47453.5453); }
+bool inside(vec2 q){
+  bool c = false;
+  for (int i = 1; i <= ${MAXP}; i++) {
+    if (i > n) break;
+    vec2 a = pts[i], b = pts[i-1];
+    if (((a.y > q.y) != (b.y > q.y)) && (q.x < (b.x-a.x)*(q.y-a.y)/(b.y-a.y) + a.x)) c = !c;
+  }
+  return c;
+}
+vec3 fx(vec2 u){
+  vec3 c = T(u); float l = L(c); vec2 px = 1.0/res;
+  if (filt == 1) {
+    float h = fract(l*2.6 + time*0.22 + u.x*0.35);
+    return hsv(h, 0.9, mix(0.4, 1.0, abs(sin(l*9.42))));
+  }
+  if (filt == 2) {
+    vec3 a = mix(vec3(0.02,0.0,0.25), vec3(0.75,0.0,0.6), smoothstep(0.0,0.35,l));
+    a = mix(a, vec3(1.0,0.25,0.0), smoothstep(0.3,0.6,l));
+    a = mix(a, vec3(1.0,0.9,0.1), smoothstep(0.55,0.8,l));
+    return mix(a, vec3(1.0), smoothstep(0.8,1.0,l));
+  }
+  if (filt == 3) {
+    float gx = L(T(u+vec2(px.x,0.0))) - L(T(u-vec2(px.x,0.0)));
+    float gy = L(T(u+vec2(0.0,px.y))) - L(T(u-vec2(0.0,px.y)));
+    float e = smoothstep(0.03, 0.18, length(vec2(gx,gy))*2.0);
+    return hsv(fract(time*0.12 + u.y*0.8 + u.x*0.3), 1.0, 1.0)*e + c*0.12;
+  }
+  if (filt == 4) {
+    float q = floor(l*5.0)/4.0;
+    return hsv(fract(q*0.37 + time*0.1), 0.85, 0.45 + 0.55*q);
+  }
+  if (filt == 5) {
+    vec3 i = 1.0 - c;
+    return hsv(fract(L(i)*0.5 + 0.55 + time*0.05), 0.55, L(i)*1.15);
+  }
+  if (filt == 6) {
+    float band = floor(u.y*28.0) + floor(time*9.0);
+    float j = (rnd(band) - 0.5) * 0.06 * step(0.72, rnd(band + 3.1));
+    float o = 0.012 + 0.008*sin(time*3.0);
+    return vec3(T(u+vec2(j+o,0.0)).r, T(u+vec2(j,0.0)).g, T(u+vec2(j-o,0.0)).b);
+  }
+  vec2 g = vec2(64.0, 64.0*res.y/res.x);
+  vec3 p = T((floor(u*g)+0.5)/g);
+  return floor(p*5.0 + 0.5)/5.0;
+}
+void main(){
+  vec3 c = T(uv);
+  if (full > 0.5 || inside(uv)) c = fx(uv);
+  gl_FragColor = vec4(c, 1.0);
+}`;
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog); gl.useProgram(prog);
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const loc = gl.getAttribLocation(prog, "p");
+gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+const U = {}; ["res","time","mirror","full","filt","n","pts"].forEach(k => U[k] = gl.getUniformLocation(prog, k));
+gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+[[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+ [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]
+  .forEach(([k, v]) => gl.texParameteri(gl.TEXTURE_2D, k, v));
+const ptsBuf = new Float32Array((MAXP + 1) * 2);
+
+/* ---------- geometría de la forma (en píxeles de pantalla) ---------- */
+const mid = (a, b) => [(a[0]+b[0])/2, (a[1]+b[1])/2];
+const dist = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1]);
+function ring(c, r, count, rot, inner) {
+  const p = [];
+  for (let i = 0; i < count; i++) {
+    const a = rot + i * 2 * Math.PI / count, rr = inner && i % 2 ? r * inner : r;
+    p.push([c[0] + Math.cos(a) * rr, c[1] + Math.sin(a) * rr]);
+  }
+  return p;
+}
+function shapePoints(hands) {
+  // cada mano: T = punta del pulgar, I = punta del índice
+  const h = hands.map(l => ({ T:l[4], I:l[8], c:mid(l[4], l[8]) })).sort((a, b) => a.c[0] - b.c[0]);
+  const s = state.shape;
+  if (s === 4 || !h.length) return null;
+  if (h.length === 1) {
+    if (s < 2) return null;                     // cuadro y triángulo necesitan dos manos
+    const r = dist(h[0].T, h[0].I) / 2;
+    const rot = Math.atan2(h[0].I[1]-h[0].T[1], h[0].I[0]-h[0].T[0]);
+    return s === 2 ? ring(h[0].c, r, 36, 0) : ring(h[0].c, r, 10, rot, 0.45);
+  }
+  const [a, b] = h;
+  if (s === 0) return [a.T, a.I, b.I, b.T];
+  if (s === 1) return [a.I, b.I, mid(a.T, b.T)];
+  const c = mid(a.c, b.c), r = dist(a.c, b.c) / 2;
+  const rot = Math.atan2(b.c[1]-a.c[1], b.c[0]-a.c[0]) - Math.PI / 2;
+  return s === 2 ? ring(c, r, 36, 0) : ring(c, r, 10, rot, 0.45);
+}
+function smoothed(p) {
+  if (!p) { state.smooth = null; return null; }
+  const q = state.smooth;
+  if (q && q.length === p.length) for (let i = 0; i < p.length; i++) {
+    p[i] = [q[i][0] + (p[i][0]-q[i][0]) * 0.6, q[i][1] + (p[i][1]-q[i][1]) * 0.6];
+  }
+  return state.smooth = p;
+}
+
+/* ---------- bucle principal ---------- */
+const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+               [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+let landmarker = null, lastT = -1;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const W = video.videoWidth, H = video.videoHeight;
+  if (video.readyState < 2 || !W) return;
+  if (out.width !== W || out.height !== H) { out.width = glc.width = W; out.height = glc.height = H; gl.viewport(0, 0, W, H); }
+
+  if (landmarker && video.currentTime !== lastT) {
+    lastT = video.currentTime;
+    try {
+      const r = landmarker.detectForVideo(video, now);
+      state.hands = (r.landmarks || []).map(l => l.map(p => [(state.mirror ? 1 - p.x : p.x) * W, p.y * H]));
+    } catch (e) { /* un cuadro fallido no detiene el bucle */ }
+  }
+  const pts = smoothed(shapePoints(state.hands));
+  let n = 0;
+  if (pts) {
+    n = Math.min(pts.length, MAXP);
+    ptsBuf[0] = pts[n-1][0] / W; ptsBuf[1] = pts[n-1][1] / H;
+    for (let i = 0; i < n; i++) { ptsBuf[(i+1)*2] = pts[i][0] / W; ptsBuf[(i+1)*2+1] = pts[i][1] / H; }
+  }
+  const t = now / 1000;
+  const filt = state.filter === 0 ? 1 + Math.floor(t / 1.4) % NF : state.filter;
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
+  gl.uniform2f(U.res, W, H); gl.uniform1f(U.time, t);
+  gl.uniform1f(U.mirror, state.mirror ? 1 : 0); gl.uniform1f(U.full, state.shape === 4 ? 1 : 0);
+  gl.uniform1i(U.filt, filt); gl.uniform1i(U.n, n); gl.uniform2fv(U.pts, ptsBuf);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  ctx.drawImage(glc, 0, 0);
+  if (state.skel) {
+    const k = Math.max(W, H) / 640;
+    if (pts) {
+      ctx.strokeStyle = "rgba(255,255,255,.85)"; ctx.lineWidth = 1.5 * k; ctx.beginPath();
+      pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+      ctx.closePath(); ctx.stroke();
+    }
+    for (const h of state.hands) {
+      ctx.strokeStyle = "#ff2030"; ctx.lineWidth = 2 * k; ctx.beginPath();
+      for (const [a, b] of BONES) { ctx.moveTo(h[a][0], h[a][1]); ctx.lineTo(h[b][0], h[b][1]); }
+      ctx.stroke();
+      ctx.fillStyle = "#30ff40";
+      for (const p of h) { ctx.beginPath(); ctx.arc(p[0], p[1], 3 * k, 0, 6.3); ctx.fill(); }
+    }
+  }
+}
+
+/* ---------- cámara ---------- */
+let stream = null;
+async function openCam(deviceId) {
+  stream?.getTracks().forEach(t => t.stop());
+  const v = deviceId ? { deviceId:{ exact:deviceId } } : { facingMode:"user" };
+  stream = await navigator.mediaDevices.getUserMedia({ video:{ ...v, width:{ ideal:1280 }, height:{ ideal:720 } }, audio:false });
+  video.srcObject = stream; await video.play();
+  const cur = stream.getVideoTracks()[0].getSettings().deviceId;
+  const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+  const sel = $("camSel"); sel.innerHTML = "";
+  cams.forEach((d, i) => sel.add(new Option(d.label || "Cámara " + (i + 1), d.deviceId, false, d.deviceId === cur)));
+}
+$("camSel").onchange = e => openCam(e.target.value).catch(showErr);
+
+async function loadHands() {
+  statusEl.textContent = "Cargando detector de manos…";
+  const { HandLandmarker, FilesetResolver } = await import(MP + "/vision_bundle.mjs");
+  const files = await FilesetResolver.forVisionTasks(MP + "/wasm");
+  const make = delegate => HandLandmarker.createFromOptions(files, {
+    baseOptions:{ modelAssetPath:MODEL, delegate }, runningMode:"VIDEO", numHands:2 });
+  try { landmarker = await make("GPU"); } catch { landmarker = await make("CPU"); }
+  statusEl.textContent = "Muestra tus manos · toca la imagen para cambiar de filtro";
+}
+function showErr(e) {
+  const m = e?.name === "NotAllowedError" ? "No hay permiso para usar la cámara. Actívalo en el navegador y recarga."
+    : e?.name === "NotFoundError" ? "No se encontró ninguna cámara."
+    : "Error: " + (e?.message || e);
+  $("err").textContent = m; statusEl.textContent = m; $("start").style.display = "flex";
+}
+$("bStart").onclick = async () => {
+  $("err").textContent = "";
+  if (!navigator.mediaDevices?.getUserMedia) return showErr(new Error("este navegador solo da acceso a la cámara en páginas https o localhost."));
+  try {
+    await openCam();
+    $("start").style.display = "none";
+    startLoop();
+  } catch (e) { showErr(e); }
+};
+let running = false, handsAsked = false;
+function startLoop() {
+  if (!running) { running = true; requestAnimationFrame(frame); }
+  if (!handsAsked) { handsAsked = true;
+    loadHands().catch(() => { handsAsked = false; statusEl.textContent = "No se pudo cargar el detector de manos (revisa tu internet)."; }); }
+}
+
+/* ---------- cámara del celular por red (WebRTC) ---------- */
+const PEERJS = "https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js";
+const QRLIB  = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js";
+const PFX = "formasfiltros-";
+const loadScript = src => new Promise((ok, no) => {
+  const s = document.createElement("script"); s.src = src; s.onload = ok;
+  s.onerror = () => no(new Error("no se pudo cargar un componente (revisa tu internet)")); document.head.appendChild(s);
+});
+const peerMsg = e => e?.type === "peer-unavailable" ? "Código no encontrado. Revisa que el PC muestre ese código."
+  : e?.type === "network" || e?.type === "server-error" ? "Sin conexión con el servicio de enlace. Revisa tu internet."
+  : "Error de conexión: " + (e?.message || e?.type || e);
+
+// --- lado PC: recibe el video ---
+let peer = null;
+async function startReceiver() {
+  $("link").hidden = false;
+  try {
+    if (!window.Peer) await loadScript(PEERJS);
+    if (peer && !peer.destroyed) { if (peer.disconnected) peer.reconnect(); showCode(); return; }
+    const abc = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const code = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => abc[b % abc.length]).join("");
+    peer = new Peer(PFX + code); peer.code = code;
+    peer.on("open", showCode);
+    peer.on("error", e => { $("linkMsg").textContent = peerMsg(e); });
+    peer.on("call", call => {
+      call.answer();
+      call.on("stream", useRemote);
+      call.on("close", () => { statusEl.textContent = "El celular se desconectó."; });
+    });
+  } catch (e) { $("linkMsg").textContent = peerMsg(e); }
+}
+async function showCode() {
+  $("bigcode").textContent = peer.code;
+  const web = location.protocol === "https:";
+  const url = location.origin + location.pathname + "#cam=" + peer.code;
+  $("linkMsg").textContent = web
+    ? "Escanea el código QR con tu celular, o abre esta app en él y escribe el código."
+    : "Abre esta app en tu celular (desde su dirección https) y escribe este código en “Enviar esta cámara al PC”.";
+  if (web) try {
+    if (!window.qrcode) await loadScript(QRLIB);
+    const q = window.qrcode(0, "M"); q.addData(url); q.make();
+    $("qr").innerHTML = q.createImgTag(5, 12);
+  } catch { /* sin QR: queda el código escrito */ }
+}
+function useRemote(remote) {
+  stream?.getTracks().forEach(t => t.stop()); stream = null;
+  video.srcObject = remote; video.play().catch(() => {});
+  state.mirror = false; $("bMirror").classList.remove("on"); state.smooth = null;
+  $("link").hidden = true; $("start").style.display = "none";
+  statusEl.textContent = "Recibiendo la cámara del celular";
+  startLoop();
+}
+$("bRecv").onclick = $("bRemote").onclick = startReceiver;
+$("bLinkClose").onclick = () => { $("link").hidden = true; };
+
+// --- lado celular: envía el video ---
+let sPeer = null, sCall = null, sStream = null, sFacing = "environment", wake = null;
+const sSay = t => { $("sStatus").textContent = t; };
+async function senderCam() {
+  const s = await navigator.mediaDevices.getUserMedia({ audio:false,
+    video:{ facingMode:sFacing, width:{ ideal:1280 }, height:{ ideal:720 }, frameRate:{ ideal:30 } } });
+  const sender = sCall?.peerConnection?.getSenders().find(x => x.track?.kind === "video");
+  if (sender) await sender.replaceTrack(s.getVideoTracks()[0]);
+  sStream?.getTracks().forEach(t => t.stop());
+  sStream = s; $("pv").srcObject = s;
+}
+async function startSender() {
+  const code = $("code").value.trim().toUpperCase();
+  $("err").textContent = "";
+  if (code.length !== 6) { $("err").textContent = "Escribe el código de 6 caracteres que muestra el PC."; return; }
+  if (!navigator.mediaDevices?.getUserMedia) return showErr(new Error("este navegador solo da acceso a la cámara en páginas https."));
+  $("sender").hidden = false; sSay("Abriendo cámara…");
+  try {
+    await senderCam();
+    sSay("Conectando con el PC…");
+    if (!window.Peer) await loadScript(PEERJS);
+    sPeer = new Peer();
+    sPeer.on("error", e => sSay(peerMsg(e)));
+    sPeer.on("open", () => {
+      sCall = sPeer.call(PFX + code, sStream);
+      sCall.on("close", () => sSay("Conexión cerrada."));
+      const pc = sCall.peerConnection;
+      pc?.addEventListener("connectionstatechange", () => {
+        if (pc.connectionState === "connected") sSay("Enviando al PC · deja esta pantalla abierta");
+        if (pc.connectionState === "failed") sSay("No se pudo conectar. Prueba con ambos equipos en la misma red.");
+      });
+    });
+    try { wake = await navigator.wakeLock?.request("screen"); } catch { /* la pantalla puede apagarse */ }
+  } catch (e) { stopSender(); showErr(e); }
+}
+function stopSender() {
+  sCall?.close(); sPeer?.destroy(); sStream?.getTracks().forEach(t => t.stop()); wake?.release?.();
+  sCall = sPeer = sStream = wake = null; $("sender").hidden = true;
+}
+$("bSend").onclick = startSender;
+$("bStop").onclick = stopSender;
+$("bFlip").onclick = () => { sFacing = sFacing === "user" ? "environment" : "user"; senderCam().catch(e => sSay(peerMsg(e))); };
+const fromLink = /^#cam=([A-Za-z0-9]{6})$/.exec(location.hash);
+if (fromLink) { $("code").value = fromLink[1].toUpperCase(); $("bSend").classList.remove("alt"); }
+
+/* ---------- foto y grabación ---------- */
+function save(blob, name) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+const stamp = () => new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+$("bPhoto").onclick = () => out.toBlob(b => b && save(b, `formas-${stamp()}.png`), "image/png");
+let rec = null, chunks = [];
+$("bRec").onclick = () => {
+  if (rec) { rec.stop(); return; }
+  const type = ["video/mp4", "video/webm;codecs=vp9", "video/webm"].find(t => window.MediaRecorder?.isTypeSupported(t));
+  if (!type) { statusEl.textContent = "Este navegador no permite grabar."; return; }
+  chunks = []; rec = new MediaRecorder(out.captureStream(30), { mimeType:type, videoBitsPerSecond:6e6 });
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.onstop = () => { save(new Blob(chunks, { type }), `formas-${stamp()}.${type.includes("mp4") ? "mp4" : "webm"}`);
+    rec = null; $("bRec").classList.remove("on"); $("bRec").textContent = "Grabar"; };
+  rec.start(); $("bRec").classList.add("on"); $("bRec").textContent = "Detener";
+};
+</script>
+</body>
+</html>
